@@ -57,23 +57,6 @@ jobs:
           name: ${{ steps.get_pom_props.outputs.name }}
           path: target/${{ steps.get_pom_props.outputs.jar_file }}
 
-      - name: Write job summary
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          {
-            echo "## Publish job"
-            echo ""
-            echo "| Item | Value |"
-            echo "|------|-------|"
-            echo "| Trigger | ${{ github.event_name }} \`${{ github.ref_name }}\` @ ${{ github.actor }} |"
-            echo "| Version | ${{ steps.get_pom_props.outputs.version }} |"
-            echo "| Artifact | ${{ steps.get_pom_props.outputs.name }} |"
-            echo "| JAR | ${{ steps.get_pom_props.outputs.jar_file }} |"
-            echo "| Deploy | Build only (app2 does not publish to GitHub Packages) |"
-            echo ""
-            echo "**Links:** [Commit \`${SHORT_SHA}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) · [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          } >> $GITHUB_STEP_SUMMARY
-
   docker:
     needs: publish
     runs-on: ubuntu-latest
@@ -242,7 +225,7 @@ jobs:
             }')
           curl -sS -X POST -H "Content-Type: application/json" -d "${BODY}" "$TEAMS_WEBHOOK_URL"
 
-  summary:
+  details:
     needs: [publish, docker]
     if: always()
     runs-on: ubuntu-latest
