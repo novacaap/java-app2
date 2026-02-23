@@ -25,10 +25,14 @@ class ItemControllerTest {
 
     @Test
     void list_returnsItems() throws Exception {
+        // Order-independent: in-memory list is shared across tests; assert seed items at index 0 and 1
         mockMvc.perform(get("/api/items"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$").isArray())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$[0].id").value(1))
+                .andExpect(jsonPath("$[0].name").value("First Item"))
+                .andExpect(jsonPath("$[1].id").value(2))
+                .andExpect(jsonPath("$[1].name").value("Second Item"));
     }
 
     @Test
