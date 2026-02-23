@@ -77,20 +77,20 @@ jobs:
         with:
           name: ${{ needs.publish.outputs.artifact_name }}
 
-      # - name: Prepare Docker build context
-      #   env:
-      #     JAR_FILE: ${{ needs.publish.outputs.jar_file }}
-      #   run: |
-      #     mkdir -p target
-      #     if [ -f "target/${JAR_FILE}" ]; then
-      #       echo "JAR already at target/${JAR_FILE}"
-      #     elif [ -f "${JAR_FILE}" ]; then
-      #       mv "${JAR_FILE}" "target/${JAR_FILE}"
-      #     else
-      #       echo "JAR not found. Workspace contents:"
-      #       ls -laR
-      #       exit 1
-      #     fi
+      - name: Prepare Docker build context
+        env:
+          JAR_FILE: ${{ needs.publish.outputs.jar_file }}
+        run: |
+          mkdir -p target
+          # if [ -f "target/${JAR_FILE}" ]; then
+          #   echo "JAR already at target/${JAR_FILE}"
+          # elif [ -f "${JAR_FILE}" ]; then
+          mv "${JAR_FILE}" "target/${JAR_FILE}"
+          # else
+          #   echo "JAR not found. Workspace contents:"
+          #   ls -laR
+          #   exit 1
+          # fi
 
       - name: Set Docker tag
         id: set_tag
