@@ -14,7 +14,6 @@ jobs:
   Maven-Build:
     runs-on: ubuntu-latest
     outputs:
-      artifact_name: ${{ steps.get_pom_props.outputs.name }}
       jar_file: ${{ steps.get_pom_props.outputs.jar_file }}
     env:
       GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
@@ -68,11 +67,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Download JAR artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.publish.outputs.artifact_name }}
 
       - name: Set Docker tag
         id: set_tag
