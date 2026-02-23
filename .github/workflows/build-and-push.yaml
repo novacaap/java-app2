@@ -41,6 +41,9 @@ jobs:
       - name: Build and test
         run: mvn --batch-mode package
 
+      - name: List target directory
+        run: ls -laR target
+
       - name: Get project coordinates from pom
         id: get_pom_props
         run: |
