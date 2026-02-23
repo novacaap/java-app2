@@ -11,13 +11,16 @@ permissions:
   packages: read
 
 jobs:
-  Maven-Build:
+  Maven-Docker-Build:
     runs-on: ubuntu-latest
-    outputs:
-      jar_file: ${{ steps.get_pom_props.outputs.jar_file }}
+    if: ${{ vars.DOCKERHUB_USERNAME != '' }}
     env:
       GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
       GH_PACKAGES_PAT: ${{ secrets.GH_PACKAGES_PAT }}
+      IMAGE_NAME: java-app2
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+    outputs:
+      docker_tag: ${{ steps.set_tag.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,10 +31,6 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Set GitHub Package repository URL for resolving java-app1
-        run: |
-          sed -i "s|REPO_OWNER|${{ github.repository_owner }}|g" pom.xml
-
       - name: Configure Maven for GitHub Packages (env)
         run: |
           mkdir -p ~/.m2
@@ -39,9 +38,6 @@ jobs:
 
       - name: Build and test
         run: mvn --batch-mode package
-
-      - name: List target directory
-        run: ls -laR target
 
       - name: Get project coordinates from pom
         id: get_pom_props
@@ -52,21 +48,6 @@ jobs:
           echo "artifactId=$ARTIFACT_ID" >> $GITHUB_OUTPUT
           echo "name=${ARTIFACT_ID}-jar-${VERSION}" >> $GITHUB_OUTPUT
           echo "jar_file=${ARTIFACT_ID}-${VERSION}.jar" >> $GITHUB_OUTPUT
-
-  Docker-Build-Push:
-    needs: Maven-Build
-    runs-on: ubuntu-latest
-    if: ${{ vars.DOCKERHUB_USERNAME != '' }}
-    env:
-      IMAGE_NAME: java-app2
-      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-      JAR_FILE: ${{ needs.Maven-Build.outputs.jar_file }}
-      REPO_NAME: ${{ github.event.repository.name }}
-    outputs:
-      docker_tag: ${{ steps.set_tag.outputs.tag }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Set Docker tag
         id: set_tag
@@ -94,8 +75,8 @@ jobs:
           context: .
           file: ./Dockerfile
           build-args: |
-            JAR_FILE=${{ env.JAR_FILE }}
-            REPO_NAME=${{ env.REPO_NAME }}
+            JAR_FILE=${{ steps.get_pom_props.outputs.jar_file }}
+            REPO_NAME=${{ github.event.repository.name }}
           platforms: linux/amd64
           push: true
           tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
@@ -107,18 +88,19 @@ jobs:
           IMAGE_REF="${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}"
           DOCKERHUB_URL="https://hub.docker.com/r/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}/tags"
           {
-            echo "## Docker job"
+            echo "## Maven-Docker-Build job"
             echo ""
             echo "| Item | Value |"
             echo "|------|-------|"
             echo "| Image | \`${IMAGE_REF}\` |"
             echo "| Tag | ${{ steps.set_tag.outputs.tag }} |"
+            echo "| JAR | ${{ steps.get_pom_props.outputs.jar_file }} |"
             echo ""
             echo "**Links:** [Docker Hub](${DOCKERHUB_URL}) · [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           } >> $GITHUB_STEP_SUMMARY
 
   Notify-Teams:
-    needs: [Maven-Build, Docker-Build-Push]
+    needs: Maven-Docker-Build
     if: always()
     runs-on: ubuntu-latest
     env:
@@ -145,30 +127,24 @@ jobs:
         continue-on-error: true
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          PUBLISH_RESULT: ${{ needs.publish.result }}
-          DOCKER_RESULT: ${{ needs.docker.result }}
-          DOCKER_TAG: ${{ needs.docker.outputs.docker_tag }}
+          BUILD_RESULT: ${{ needs.Maven-Docker-Build.result }}
+          DOCKER_TAG: ${{ needs.Maven-Docker-Build.outputs.docker_tag }}
           FALLBACK_TAG: ${{ steps.fallback_tag.outputs.tag }}
         run: |
           if [ -z "$TEAMS_WEBHOOK_URL" ]; then
             echo "TEAMS_WEBHOOK_URL not set, skipping notification"
             exit 0
           fi
-          if [ "$DOCKER_RESULT" = "success" ] || [ "$DOCKER_RESULT" = "failure" ]; then
-            STATUS="$DOCKER_RESULT"
-            USE_TAG="${DOCKER_TAG}"
-          else
-            STATUS="$PUBLISH_RESULT"
-            USE_TAG=""
-          fi
+          STATUS="$BUILD_RESULT"
+          USE_TAG="${DOCKER_TAG}"
           [ -z "$USE_TAG" ] && USE_TAG="${FALLBACK_TAG}"
           [ -z "$USE_TAG" ] && USE_TAG="(not built)"
           [ "$STATUS" = "success" ] && THEME="0076D7" || THEME="D13438"
-          if [ "$DOCKER_RESULT" = "success" ] || [ "$DOCKER_RESULT" = "failure" ]; then
+          if [ "$BUILD_RESULT" = "success" ]; then
             IMAGE_LINE="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${USE_TAG}"
             TITLE="Build and Push (Docker Hub)"
           else
-            IMAGE_LINE="Docker skipped (DOCKERHUB_USERNAME not set)"
+            IMAGE_LINE="Build skipped or failed (DOCKERHUB_USERNAME not set or error)"
             TITLE="Build and Push"
           fi
           BODY=$(jq -n \
@@ -202,7 +178,7 @@ jobs:
           curl -sS -X POST -H "Content-Type: application/json" -d "${BODY}" "$TEAMS_WEBHOOK_URL"
 
   Details:
-    needs: [Maven-Build, Docker-Build-Push]
+    needs: Maven-Docker-Build
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -211,11 +187,8 @@ jobs:
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          PUBLISH_RESULT="${{ needs.publish.result }}"
-          DOCKER_RESULT="${{ needs.docker.result }}"
-          ARTIFACT_NAME="${{ needs.publish.outputs.artifact_name }}"
-          JAR_FILE="${{ needs.publish.outputs.jar_file }}"
-          DOCKER_TAG="${{ needs.docker.outputs.docker_tag }}"
+          BUILD_RESULT="${{ needs.Maven-Docker-Build.result }}"
+          DOCKER_TAG="${{ needs.Maven-Docker-Build.outputs.docker_tag }}"
           DOCKERHUB_USERNAME="${{ vars.DOCKERHUB_USERNAME }}"
           IMAGE_NAME="java-app2"
           {
@@ -232,13 +205,12 @@ jobs:
             echo ""
             echo "| Job | Status | Details |"
             echo "|-----|--------|---------|"
-            echo "| publish | ${PUBLISH_RESULT} | \`${ARTIFACT_NAME}\` (${JAR_FILE}) |"
-            if [ "$DOCKER_RESULT" = "success" ]; then
-              echo "| docker | ${DOCKER_RESULT} | \`${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${DOCKER_TAG}\` |"
-            elif [ "$DOCKER_RESULT" = "skipped" ]; then
-              echo "| docker | skipped | DOCKERHUB_USERNAME not set |"
+            if [ "$BUILD_RESULT" = "success" ]; then
+              echo "| Maven-Docker-Build | ${BUILD_RESULT} | \`${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${DOCKER_TAG}\` |"
+            elif [ "$BUILD_RESULT" = "skipped" ]; then
+              echo "| Maven-Docker-Build | skipped | DOCKERHUB_USERNAME not set |"
             else
-              echo "| docker | ${DOCKER_RESULT} | - |"
+              echo "| Maven-Docker-Build | ${BUILD_RESULT} | - |"
             fi
             echo ""
             echo "**[View workflow run](${RUN_URL})**"

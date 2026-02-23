@@ -78,6 +78,9 @@ atlassian-ide-plugin.xml
 
 .cursor/
 
+# Maven settings with credentials (generated for local Docker build; never commit)
+.m2-settings-secret.xml
+
 # Compiled class file
 *.class
 

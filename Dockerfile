@@ -1,6 +1,6 @@
-# Runtime only - JAR is built in CI (publish job) and copied from context.
+# Runtime only - JAR is built in CI (Maven-Docker-Build job) and copied from context.
 # JAR_FILE and REPO_NAME are passed at build time.
-FROM amazoncorretto:21-alpine-jdk
+FROM eclipse-temurin:21-jre-alpine
 
 EXPOSE 8080
 

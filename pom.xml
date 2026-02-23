@@ -24,8 +24,8 @@
     <repositories>
         <repository>
             <id>github</id>
-            <name>GitHub REPO_OWNER Apache Maven Packages</name>
-            <url>https://maven.pkg.github.com/REPO_OWNER/java-app1</url>
+            <name>GitHub Novacaap Apache Maven Packages</name>
+            <url>https://maven.pkg.github.com/novacaap/java-app1</url>
         </repository>
     </repositories>
 

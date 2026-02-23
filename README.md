@@ -8,9 +8,9 @@ This project is a reference microservice that consumes another artifact (java-ap
 
 - **Application:** A Spring Boot 3.2 web app on Java 21 with REST endpoints, health check, and OpenAPI/Swagger UI.
 - **Dependency:** Maven dependency on `com.example:java-app1` resolved from GitHub Package (no OCI M2 bucket).
-- **Build & image:** Maven build in CI; the Docker image is built from the JAR artifact (single-stage Dockerfile, no Maven inside the image). For local Docker build, run `mvn package` first so the JAR exists at `target/java-app2-1.0.0.jar`.
+- **Build & image:** **Single-stage Dockerfile**; JAR is built by GitHub Actions in the **Maven-Docker-Build** job (Maven runs in Actions, then Docker build uses `target/` in the same job). No Maven inside the image.
 - **Configuration:** `application.properties` lives in `src/main/resources/` (no OCI config bucket).
-- **CI/CD:** GitHub Actions workflow that resolves java-app1 from GitHub Package, builds the JAR, optionally builds and pushes a Docker image to Docker Hub, and can notify Microsoft Teams.
+- **CI/CD:** Single job **Maven-Docker-Build** runs Maven (build + test), then builds and pushes the Docker image when `DOCKERHUB_USERNAME` is set; can notify Microsoft Teams.
 
 Use it as a template for microservices that depend on internal packages from GitHub Package and optionally push to Docker Hub, without OCI.
 
@@ -66,11 +66,12 @@ Then open:
 
 ## Run with Docker
 
-The Dockerfile expects a pre-built JAR (no Maven stage in the image). Build the JAR first, then build the image. For local builds, pass `JAR_FILE` and `REPO_NAME` as build-args to match the artifact name:
+The Dockerfile is **runtime-only**: it expects the JAR to exist in `target/` (built by CI or locally with Maven). Build the JAR first (see **Build & run locally** for Maven + GitHub Package auth), then build the image:
 
 ```bash
-mvn package
-docker build --build-arg JAR_FILE=java-app2-1.0.0.jar --build-arg REPO_NAME=java-app2 -t java-app2 .
+# After mvn package (with ~/.m2/settings.xml for GitHub Package)
+JAR_FILE=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)-$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout).jar
+docker build --build-arg JAR_FILE="$JAR_FILE" --build-arg REPO_NAME=java-app2 -t java-app2 .
 docker run -p 8080:8080 java-app2
 ```
 
@@ -78,14 +79,13 @@ Then open http://localhost:8080 and http://localhost:8080/swagger-ui.html
 
 ## GitHub Actions: Workflow overview
 
-The **Build and Push** workflow (`.github/workflows/build-and-push.yaml`) builds the app, optionally builds and pushes a Docker image from the JAR artifact, and can notify Microsoft Teams.
+The **Build and Push** workflow (`.github/workflows/build-and-push.yaml`) uses a single job to run Maven in Actions and build the Docker image from the resulting JAR.
 
 - **Triggers:** Push to branches `main` or `dev`; release `created`; or manual run via **Actions → Workflow dispatch**.
 - **Jobs:**
-  1. **publish:** Checkout, set up JDK 21, replace `REPO_OWNER` in `pom.xml`, configure Maven from `ci/settings.xml` (credentials: `GH_PACKAGES_USERNAME`, `GH_PACKAGES_PAT`), run `mvn package` (build + test). App2 does not publish to GitHub Packages; the JAR is uploaded as an artifact for the Docker job. Job summary is written to the Actions run page.
-  2. **docker:** (Optional) If variable `DOCKERHUB_USERNAME` is set: download the JAR artifact, prepare build context, set Docker tag, log in to Docker Hub, build and push the image (single-stage, with `JAR_FILE` and `REPO_NAME` build-args). Tag format: `<ref>-<YYMMDDHH>-<short-sha>-<run_number>` (or tag-based when triggered by release). Job summary is written to the Actions run page.
-  3. **notify-teams:** Runs after publish (and docker when applicable). If secret `TEAMS_WEBHOOK_URL` is set, posts a Microsoft Teams message card with build status and image tag (when Docker push ran). If the secret is unset, notification is skipped.
-  4. **summary:** Writes a run summary to the workflow run page (event, ref, actor, commit link, job status table).
+  1. **Maven-Docker-Build:** (Runs when variable `DOCKERHUB_USERNAME` is set.) Checkout, set `REPO_OWNER` in `pom.xml`, configure Maven with `ci/settings.xml` (GitHub Package auth). Run `mvn package`, get project coordinates, then build and push the image (context has `target/` with the JAR). Tag format: `<ref>-<YYMMDDHH>-<short-sha>-<run_number>` (or tag-based when triggered by release).
+  2. **Notify-Teams:** Runs after Maven-Docker-Build (always). If secret `TEAMS_WEBHOOK_URL` is set, posts a Microsoft Teams message card with build status and image tag.
+  3. **Details:** Writes a run summary to the workflow run page (event, ref, actor, commit link, job status table).
 
 ## GitHub Actions: Variables and Secrets
 
@@ -95,7 +95,7 @@ Configure these in the repo **Settings → Secrets and variables → Actions**.
 
 | Variable             | Required | Description                                                                                                                                      |
 | -------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DOCKERHUB_USERNAME` | No       | Docker Hub username. When set, the **docker** job builds and pushes the image as `DOCKERHUB_USERNAME/java-app2:<tag>`. Omit to skip Docker push. |
+| `DOCKERHUB_USERNAME` | No       | Docker Hub username. When set, the **Maven-Docker-Build** job runs and pushes the image as `DOCKERHUB_USERNAME/java-app2:<tag>`. Omit to skip the build job. |
 
 ### Secrets
 
@@ -104,7 +104,7 @@ Configure these in the repo **Settings → Secrets and variables → Actions**.
 | `GH_PACKAGES_PAT`      | Yes             | **Classic** personal access token so Maven can resolve java-app1 from GitHub Package. Create at GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)**. Required scopes: **`read:packages`**; add **`repo`** if the repository or java-app1 package is private.        |
 | `GH_PACKAGES_USERNAME` | Recommended      | GitHub **username (login)** of the account that owns `GH_PACKAGES_PAT`. Maven uses this for auth. If unset, the workflow uses `github.actor`. Set explicitly if the actor is not the token owner.                                                                                                          |
 | `DOCKERHUB_TOKEN`      | When Docker push | Docker Hub personal access token (Read & Write). Required only when `DOCKERHUB_USERNAME` is set and you want to push the image. Create at [Docker Hub → Security](https://hub.docker.com/settings/security).                                                                                            |
-| `TEAMS_WEBHOOK_URL`    | No               | Microsoft Teams incoming webhook URL. When set, the **notify-teams** job posts a card with build status and image tag (if Docker push ran). If unset, notification is skipped. Create in Teams: channel → Connectors → Incoming Webhook.                                                                |
+| `TEAMS_WEBHOOK_URL`    | No               | Microsoft Teams incoming webhook URL. When set, the **Notify-Teams** job posts a card with build status and image tag. If unset, notification is skipped. Create in Teams: channel → Connectors → Incoming Webhook.                                                                |
 
 No OCI variables or secrets are used.
 
