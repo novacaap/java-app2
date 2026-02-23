@@ -18,7 +18,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <java-app1.version>1.0.1</java-app1.version>
+        <java-app1.version>1.0.2</java-app1.version>
     </properties>
 
     <repositories>
