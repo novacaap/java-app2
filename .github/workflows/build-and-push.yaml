@@ -83,22 +83,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Write job summary
-        run: |
-          IMAGE_REF="${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}"
-          DOCKERHUB_URL="https://hub.docker.com/r/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}/tags"
-          {
-            echo "## Maven-Docker-Build job"
-            echo ""
-            echo "| Item | Value |"
-            echo "|------|-------|"
-            echo "| Image | \`${IMAGE_REF}\` |"
-            echo "| Tag | ${{ steps.set_tag.outputs.tag }} |"
-            echo "| JAR | ${{ steps.get_pom_props.outputs.jar_file }} |"
-            echo ""
-            echo "**Links:** [Docker Hub](${DOCKERHUB_URL}) · [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          } >> $GITHUB_STEP_SUMMARY
-
   Notify-Teams:
     needs: Maven-Docker-Build
     if: always()
