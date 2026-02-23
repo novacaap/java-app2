@@ -1,0 +1,286 @@
+name: Build and Push
+on:
+  push:
+    branches: [main, dev]
+  release:
+    types: [created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_name: ${{ steps.get_pom_props.outputs.name }}
+      jar_file: ${{ steps.get_pom_props.outputs.jar_file }}
+    env:
+      GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
+      GH_PACKAGES_PAT: ${{ secrets.GH_PACKAGES_PAT }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set GitHub Package repository URL for resolving java-app1
+        run: |
+          sed -i "s|REPO_OWNER|${{ github.repository_owner }}|g" pom.xml
+
+      - name: Configure Maven for GitHub Packages (env)
+        run: |
+          mkdir -p ~/.m2
+          cp ci/settings.xml ~/.m2/settings.xml
+
+      - name: Build and test
+        run: mvn --batch-mode package
+
+      - name: Get project coordinates from pom
+        id: get_pom_props
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "artifactId=$ARTIFACT_ID" >> $GITHUB_OUTPUT
+          echo "name=${ARTIFACT_ID}-jar-${VERSION}" >> $GITHUB_OUTPUT
+          echo "jar_file=${ARTIFACT_ID}-${VERSION}.jar" >> $GITHUB_OUTPUT
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.get_pom_props.outputs.name }}
+          path: target/${{ steps.get_pom_props.outputs.jar_file }}
+
+      - name: Write job summary
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          {
+            echo "## Publish job"
+            echo ""
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Trigger | ${{ github.event_name }} \`${{ github.ref_name }}\` @ ${{ github.actor }} |"
+            echo "| Version | ${{ steps.get_pom_props.outputs.version }} |"
+            echo "| Artifact | ${{ steps.get_pom_props.outputs.name }} |"
+            echo "| JAR | ${{ steps.get_pom_props.outputs.jar_file }} |"
+            echo "| Deploy | Build only (app2 does not publish to GitHub Packages) |"
+            echo ""
+            echo "**Links:** [Commit \`${SHORT_SHA}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) · [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> $GITHUB_STEP_SUMMARY
+
+  docker:
+    needs: publish
+    runs-on: ubuntu-latest
+    if: ${{ vars.DOCKERHUB_USERNAME != '' }}
+    env:
+      IMAGE_NAME: java-app2
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      JAR_FILE: ${{ needs.publish.outputs.jar_file }}
+      REPO_NAME: ${{ github.event.repository.name }}
+    outputs:
+      docker_tag: ${{ steps.set_tag.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.publish.outputs.artifact_name }}
+
+      - name: Prepare Docker build context
+        env:
+          JAR_FILE: ${{ needs.publish.outputs.jar_file }}
+        run: |
+          mkdir -p target
+          if [ -f "target/${JAR_FILE}" ]; then
+            echo "JAR already at target/${JAR_FILE}"
+          elif [ -f "${JAR_FILE}" ]; then
+            mv "${JAR_FILE}" "target/${JAR_FILE}"
+          else
+            echo "JAR not found. Workspace contents:"
+            ls -laR
+            exit 1
+          fi
+
+      - name: Set Docker tag
+        id: set_tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}-$SHORT_SHA" >> $GITHUB_OUTPUT
+          else
+            YYMMDDHH=$(date +%y%m%d%H)
+            echo "tag=${{ github.ref_name }}-${YYMMDDHH}-${SHORT_SHA}-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            JAR_FILE=${{ env.JAR_FILE }}
+            REPO_NAME=${{ env.REPO_NAME }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Write job summary
+        run: |
+          IMAGE_REF="${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}"
+          DOCKERHUB_URL="https://hub.docker.com/r/${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}/tags"
+          {
+            echo "## Docker job"
+            echo ""
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Image | \`${IMAGE_REF}\` |"
+            echo "| Tag | ${{ steps.set_tag.outputs.tag }} |"
+            echo ""
+            echo "**Links:** [Docker Hub](${DOCKERHUB_URL}) · [View run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } >> $GITHUB_STEP_SUMMARY
+
+  notify-teams:
+    needs: [publish, docker]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+      IMAGE_NAME: java-app2
+    steps:
+      - name: Checkout for fallback tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Compute fallback tag
+        id: fallback_tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "tag=${{ github.ref_name }}-$SHORT_SHA" >> $GITHUB_OUTPUT
+          else
+            YYMMDDHH=$(date +%y%m%d%H)
+            echo "tag=${{ github.ref_name }}-${YYMMDDHH}-${SHORT_SHA}-${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Microsoft Teams
+        continue-on-error: true
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+          DOCKER_TAG: ${{ needs.docker.outputs.docker_tag }}
+          FALLBACK_TAG: ${{ steps.fallback_tag.outputs.tag }}
+        run: |
+          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
+            echo "TEAMS_WEBHOOK_URL not set, skipping notification"
+            exit 0
+          fi
+          if [ "$DOCKER_RESULT" = "success" ] || [ "$DOCKER_RESULT" = "failure" ]; then
+            STATUS="$DOCKER_RESULT"
+            USE_TAG="${DOCKER_TAG}"
+          else
+            STATUS="$PUBLISH_RESULT"
+            USE_TAG=""
+          fi
+          [ -z "$USE_TAG" ] && USE_TAG="${FALLBACK_TAG}"
+          [ -z "$USE_TAG" ] && USE_TAG="(not built)"
+          [ "$STATUS" = "success" ] && THEME="0076D7" || THEME="D13438"
+          if [ "$DOCKER_RESULT" = "success" ] || [ "$DOCKER_RESULT" = "failure" ]; then
+            IMAGE_LINE="${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${USE_TAG}"
+            TITLE="Build and Push (Docker Hub)"
+          else
+            IMAGE_LINE="Docker skipped (DOCKERHUB_USERNAME not set)"
+            TITLE="Build and Push"
+          fi
+          BODY=$(jq -n \
+            --arg theme "$THEME" \
+            --arg status "$STATUS" \
+            --arg title "$TITLE" \
+            --arg repo "${{ github.repository }}" \
+            --arg ref "${{ github.ref_name }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg image "$IMAGE_LINE" \
+            --arg runUrl "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{
+              "@type": "MessageCard",
+              "@context": "https://schema.org/extensions",
+              "themeColor": $theme,
+              "summary": ($title + " - " + $status),
+              "sections": [
+                {
+                  "activityTitle": $title,
+                  "activitySubtitle": $repo,
+                  "facts": [
+                    { "name": "Status", "value": $status },
+                    { "name": "Ref", "value": $ref },
+                    { "name": "Commit", "value": $sha },
+                    { "name": "Image", "value": $image },
+                    { "name": "Run", "value": ("[View workflow](" + $runUrl + ")") }
+                  ]
+                }
+              ]
+            }')
+          curl -sS -X POST -H "Content-Type: application/json" -d "${BODY}" "$TEAMS_WEBHOOK_URL"
+
+  summary:
+    needs: [publish, docker]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write run summary
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          PUBLISH_RESULT="${{ needs.publish.result }}"
+          DOCKER_RESULT="${{ needs.docker.result }}"
+          ARTIFACT_NAME="${{ needs.publish.outputs.artifact_name }}"
+          JAR_FILE="${{ needs.publish.outputs.jar_file }}"
+          DOCKER_TAG="${{ needs.docker.outputs.docker_tag }}"
+          DOCKERHUB_USERNAME="${{ vars.DOCKERHUB_USERNAME }}"
+          IMAGE_NAME="java-app2"
+          {
+            echo "## Run summary"
+            echo ""
+            echo "| Item | Value |"
+            echo "|------|-------|"
+            echo "| Event | ${{ github.event_name }} |"
+            echo "| Ref | \`${{ github.ref_name }}\` |"
+            echo "| Actor | ${{ github.actor }} |"
+            echo "| Commit | [\`${SHORT_SHA}\`](${COMMIT_URL}) |"
+            echo ""
+            echo "### Jobs"
+            echo ""
+            echo "| Job | Status | Details |"
+            echo "|-----|--------|---------|"
+            echo "| publish | ${PUBLISH_RESULT} | \`${ARTIFACT_NAME}\` (${JAR_FILE}) |"
+            if [ "$DOCKER_RESULT" = "success" ]; then
+              echo "| docker | ${DOCKER_RESULT} | \`${DOCKERHUB_USERNAME}/${IMAGE_NAME}:${DOCKER_TAG}\` |"
+            elif [ "$DOCKER_RESULT" = "skipped" ]; then
+              echo "| docker | skipped | DOCKERHUB_USERNAME not set |"
+            else
+              echo "| docker | ${DOCKER_RESULT} | - |"
+            fi
+            echo ""
+            echo "**[View workflow run](${RUN_URL})**"
+          } >> $GITHUB_STEP_SUMMARY
