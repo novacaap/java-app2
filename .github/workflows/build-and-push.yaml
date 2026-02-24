@@ -17,7 +17,7 @@ jobs:
     env:
       GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
       GH_PACKAGES_PAT: ${{ secrets.GH_PACKAGES_PAT }}
-      IMAGE_NAME: java-app2
+      IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE }}
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
     outputs:
       docker_tag: ${{ steps.set_tag.outputs.tag }}
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
-      IMAGE_NAME: java-app2
+      IMAGE_NAME: ${{ vars.DOCKERHUB_IMAGE }}
     steps:
       - name: Checkout for fallback tag
         uses: actions/checkout@v4
@@ -174,7 +174,7 @@ jobs:
           BUILD_RESULT="${{ needs.Maven-Docker-Build.result }}"
           DOCKER_TAG="${{ needs.Maven-Docker-Build.outputs.docker_tag }}"
           DOCKERHUB_USERNAME="${{ vars.DOCKERHUB_USERNAME }}"
-          IMAGE_NAME="java-app2"
+          IMAGE_NAME="${{ vars.DOCKERHUB_IMAGE }}"
           {
             echo "## Run summary"
             echo ""

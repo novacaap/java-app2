@@ -14,7 +14,7 @@ A Java 21 Spring Boot 3 web application that **uses java-app1 as a library** (sh
 
 1. **java-app1** is a plain Java library that publishes `Item` and `Message` (package `com.example.javaapp1.model`) to GitHub Package.
 2. **java-app2** (this repo) adds `com.example:java-app1` as a dependency, imports those types, and implements the REST API and Docker image.
-3. Flow: Publish java-app1 → any app (e.g. java-app2) adds the dependency and uses the library; CI builds this app and optionally pushes `DOCKERHUB_USERNAME/java-app2:<tag>`.
+3. Flow: Publish java-app1 → any app (e.g. java-app2) adds the dependency and uses the library; CI builds this app and optionally pushes `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (image name from variable **DOCKERHUB_IMAGE**).
 
 ```
 java-app1 (library) → GitHub Package → java-app2 (Maven dep) → mvn package → JAR in target/ → Docker image (optional)
@@ -101,7 +101,7 @@ java-app2/
 - **As a dependency:** Other projects that need **shared types** (Item, Message) should depend on **java-app1**. This repo (java-app2) is the **runnable application** that uses that library and exposes a REST API and Docker image.
 - **Running locally:** Build with Maven (requires GitHub Package auth to resolve java-app1), then run the JAR (see below).
 - **Running with Docker:** Build the JAR locally (or use CI-built artifact), then build the image with `JAR_FILE` and `REPO_NAME` build-args and run the container.
-- **Using the Docker image:** The image is the runnable Spring Boot app (REST API, Swagger). Image name/tag: `DOCKERHUB_USERNAME/java-app2:<tag>` (e.g. `main-26022314-a1b2c3d-42`). Exposes port 8080; use for deployment, local testing, or as a base for further customization.
+- **Using the Docker image:** The image is the runnable Spring Boot app (REST API, Swagger). Image name/tag: `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (e.g. `myuser/java-app2:main-26022314-a1b2c3d-42`). Set variable **DOCKERHUB_IMAGE** in the repo (e.g. `java-app2`). Exposes port 8080; use for deployment, local testing, or as a base for further customization.
 
 ---
 
@@ -153,7 +153,7 @@ docker run -p 8080:8080 java-app2
    - Run `mvn --batch-mode package` (build + test).
    - **Get project coordinates:** `mvn help:evaluate` for `project.version` and `project.artifactId`; output `jar_file` = `artifactId-version.jar`.
    - **Set Docker tag:** e.g. `main-YYMMDDHH-<short-sha>-<run_number>` or for release `ref-name-<short-sha>`.
-   - Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/java-app2:<tag>`.
+   - Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (image name from variable **DOCKERHUB_IMAGE**).
    - Write job summary (image, tag, JAR name).
 
 2. **Notify-Teams**
@@ -179,7 +179,8 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| **DOCKERHUB_USERNAME** | No | Docker Hub username. When set, **Maven-Docker-Build** runs and pushes `DOCKERHUB_USERNAME/java-app2:<tag>`. Omit to skip the build job (Notify-Teams and Details still run with skipped build). |
+| **DOCKERHUB_USERNAME** | No | Docker Hub username. When set, **Maven-Docker-Build** runs and pushes `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>`. Omit to skip the build job (Notify-Teams and Details still run with skipped build). |
+| **DOCKERHUB_IMAGE** | When pushing image | Docker image name (e.g. `java-app2`). Used as the image name when pushing to Docker Hub; the full image is `DOCKERHUB_USERNAME/DOCKERHUB_IMAGE:<tag>`. Set in **Settings → Secrets and variables → Actions → Variables**. |
 
 ### Secrets
 
