@@ -30,7 +30,7 @@ java-app1 (library) → GitHub Package → java-app2 (Maven dep) → mvn package
 | **Group/Artifact** | `com.example:java-app2` (see `pom.xml`) |
 | **Version** | Defined in `pom.xml` (e.g. `1.0.0`) |
 | **Library dependency** | `com.example:java-app1` (version from property `java-app1.version`, e.g. `1.0.2`) – provides `Item`, `Message` from `com.example.javaapp1.model` |
-| **Build & image** | Single job **Maven-Docker-Build**: Maven runs in Actions (resolves java-app1 from GitHub Package, produces JAR), then Docker build uses `target/<jar>` in the same job. Single-stage Dockerfile; no Maven inside the image. |
+| **Build & image** | Single job **Maven-Docker-Build**: Maven runs in Actions (resolves java-app1 from GitHub Package, produces JAR), then Docker build uses `target/<jar>` and `entrypoint.sh` in the same job. Single-stage Dockerfile; no Maven in the image; container starts via **`/app/entrypoint.sh`** (runs `java -jar /app/app.jar`). |
 | **Configuration** | `application.properties` in `src/main/resources/` (no OCI config bucket). |
 | **CI/CD** | GitHub Actions: **Maven-Docker-Build** (build, test, Docker build/push), **Notify-Teams**, **Details**. |
 
@@ -46,7 +46,7 @@ Docker is built **in the same CI job** as the Maven build (**Maven-Docker-Build*
 2. **`mvn package`** → JAR is produced in `target/<artifactId>-<version>.jar`. Maven resolves java-app1 from GitHub Package during this step.
 3. **Get project coordinates** → `mvn help:evaluate` for `jar_file` (e.g. `java-app2-1.0.0.jar`).
 4. **Set Docker tag** → e.g. `main-YYMMDDHH-<short-sha>-<run_number>`.
-5. **Docker login** → **Build and push** with build context `.` (so `target/` with the JAR is available), build-args `JAR_FILE` and `REPO_NAME`. The Dockerfile is **single-stage, runtime-only**: base image is JRE (`eclipse-temurin:21-jre-alpine`), no Maven in the image; it copies `target/${JAR_FILE}` into the image and runs `java -jar`.
+5. **Docker login** → **Build and push** with build context `.` (so `target/` and `entrypoint.sh` are available), build-args `JAR_FILE` and `REPO_NAME`. The Dockerfile is **single-stage, runtime-only**: base image is JRE (`eclipse-temurin:21-jre-alpine`), no Maven in the image; it copies `target/${JAR_FILE}` to `/app/app.jar`, copies and sets executable `entrypoint.sh`, and uses **`/app/entrypoint.sh`** as `ENTRYPOINT` (the script runs `java -jar /app/app.jar`).
 
 **Summary:** The same job runs Maven (which resolves java-app1 from GitHub Package and produces the app JAR) and then builds the Docker image from that JAR; the image is runtime-only (no build tools).
 
@@ -65,7 +65,8 @@ java-app2/
 │   └── application.properties   # Server port, app name, etc.
 ├── src/test/...                 # Unit/integration tests
 ├── pom.xml                      # groupId com.example, artifactId java-app2, repositories + dependency on java-app1
-├── Dockerfile                   # Runtime-only: COPY target/${JAR_FILE}, ARG JAR_FILE, REPO_NAME
+├── Dockerfile                   # Runtime-only: COPY target/${JAR_FILE} → /app/app.jar, entrypoint.sh; ENTRYPOINT /app/entrypoint.sh
+├── entrypoint.sh                # Container entrypoint: exec java -jar /app/app.jar (extend for JVM opts, etc.)
 └── README.md
 ```
 
@@ -73,7 +74,8 @@ java-app2/
 
 - **`pom.xml`** – `<repositories>` points to `https://maven.pkg.github.com/<owner>/java-app1`. Dependency `com.example:java-app1` with version from property `java-app1.version`. Replace `REPO_OWNER` (or the full owner in the URL) for your org.
 - **`ci/settings.xml`** – Server `id=github`; credentials from env `GH_PACKAGES_USERNAME` and `GH_PACKAGES_PAT` (Classic PAT with `read:packages`).
-- **`Dockerfile`** – Expects build-args `JAR_FILE` and `REPO_NAME`. Copies `target/${JAR_FILE}` into the image. Base: `eclipse-temurin:21-jre-alpine`.
+- **`Dockerfile`** – Expects build-args `JAR_FILE` and `REPO_NAME`. Copies `target/${JAR_FILE}` to `/app/app.jar` and `entrypoint.sh` to `/app/entrypoint.sh`; `ENTRYPOINT` is `/app/entrypoint.sh`. Base: `eclipse-temurin:21-jre-alpine`.
+- **`entrypoint.sh`** – Shell script that runs `exec java -jar /app/app.jar "$@"`. You can extend it for JVM options, pre-run checks, or wrapping the Java process.
 
 ---
 
@@ -126,7 +128,7 @@ java -jar target/java-app2-1.0.0.jar
 
 ## Run with Docker
 
-The Dockerfile is **runtime-only**: it expects the JAR in `target/`. Build the JAR first (see above), then build the image with the correct `JAR_FILE` and `REPO_NAME`:
+The Dockerfile is **runtime-only**: it expects the JAR in `target/` and `entrypoint.sh` in the project root. Build the JAR first (see above), then build the image with the correct `JAR_FILE` and `REPO_NAME`:
 
 ```bash
 # After mvn package (with ~/.m2/settings.xml for GitHub Package)
