@@ -1,6 +1,10 @@
 package com.dockerforjavadevelopers.hello.controller;
 
 import com.example.javaapp1.model.Item;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Scope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -19,6 +23,7 @@ public class ItemController {
 
     private final List<Item> items = new ArrayList<>();
     private final AtomicLong idGenerator = new AtomicLong(1);
+    private final Tracer tracer = GlobalOpenTelemetry.getTracer("java-app2");
 
     public ItemController() {
         items.add(new Item(idGenerator.getAndIncrement(), "First Item", "A sample item"));
@@ -45,11 +50,18 @@ public class ItemController {
     @PostMapping
     @Operation(summary = "Create item", description = "Creates a new item")
     public ResponseEntity<Item> create(@RequestBody Map<String, String> body) {
-        String name = body.getOrDefault("name", "Unnamed");
-        String description = body.getOrDefault("description", "");
-        Item item = new Item(idGenerator.getAndIncrement(), name, description);
-        items.add(item);
-        return ResponseEntity.ok(item);
+        Span span = tracer.spanBuilder("ItemController.create").startSpan();
+        try (Scope scope = span.makeCurrent()) {
+            String name = body.getOrDefault("name", "Unnamed");
+            String description = body.getOrDefault("description", "");
+            span.setAttribute("app.item.name", name);
+            Item item = new Item(idGenerator.getAndIncrement(), name, description);
+            items.add(item);
+            span.setAttribute("app.item.id", item.id());
+            return ResponseEntity.ok(item);
+        } finally {
+            span.end();
+        }
     }
 
     @DeleteMapping("/{id}")

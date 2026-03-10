@@ -98,6 +98,70 @@ java-app2/
 
 ---
 
+## Distributed tracing with Tempo (OpenTelemetry)
+
+This service is preconfigured to emit **OpenTelemetry traces** via the OpenTelemetry Java Agent and export them to **Grafana Tempo**.
+
+### How it works
+
+- The Docker image includes the **OpenTelemetry Java Agent** (downloaded at build time).
+- The container entrypoint runs:
+
+```bash
+java -javaagent:/app/opentelemetry-javaagent.jar ${JAVA_OPTS} -jar /app/${REPO_NAME}/${JAR_FILE}
+```
+
+- The agent auto-instruments:
+  - Incoming HTTP requests (Spring MVC / Tomcat)
+  - JDBC / HTTP clients (if present)
+  - JVM runtime
+- Traces are exported via **OTLP** to your Tempo endpoint, configured with environment variables.
+
+### Required environment variables for Tempo
+
+Set these environment variables on the container (Kubernetes `env`, Docker `-e`, etc.):
+
+```bash
+# Where Tempo OTLP gRPC endpoint is reachable from the app
+OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo.monitoring.svc.cluster.local:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+
+# Service identity
+OTEL_SERVICE_NAME=java-app2
+OTEL_RESOURCE_ATTRIBUTES=service.namespace=acute-dev,service.instance.id=${HOSTNAME},deployment.environment=dev
+
+# Tracing sampler (always on at the edge, but respects upstream parent sampling)
+OTEL_TRACES_SAMPLER=parentbased_always_on
+
+# We only use traces; logs/metrics are disabled here
+OTEL_METRICS_EXPORTER=none
+OTEL_LOGS_EXPORTER=none
+```
+
+Adjust the `OTEL_EXPORTER_OTLP_ENDPOINT` to match your Tempo Service name/namespace.
+
+### Logs with TraceID / SpanID
+
+The application uses **Logback** with a pattern that includes the OpenTelemetry correlation IDs:
+
+- Pattern (see `src/main/resources/logback-spring.xml`):
+
+```text
+%d{ISO8601} %-5level [%thread] trace_id=%X{trace_id} span_id=%X{span_id} %logger - %msg%n
+```
+
+When the Java Agent is active, each log line within a trace context will contain:
+
+- `trace_id` – the trace identifier (matches Tempo / Grafana “Trace ID”)
+- `span_id` – the current span identifier
+
+If your logs are shipped to a centralized system (e.g. Loki), you can:
+
+1. **Filter** logs by `trace_id=<value>` copied from Tempo.
+2. Or click from a log line (if supported by your tooling) to open the corresponding trace in Grafana Tempo.
+
+---
+
 ## Using the application
 
 - **As a dependency:** Other projects that need **shared types** (Item, Message) should depend on **java-app1**. This repo (java-app2) is the **runnable application** that uses that library and exposes a REST API and Docker image.
