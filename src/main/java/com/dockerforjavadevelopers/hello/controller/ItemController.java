@@ -8,6 +8,8 @@ import io.opentelemetry.context.Scope;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +23,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Tag(name = "Items", description = "Sample CRUD operations for items")
 public class ItemController {
 
+    private static final Logger log = LoggerFactory.getLogger(ItemController.class);
     private final List<Item> items = new ArrayList<>();
     private final AtomicLong idGenerator = new AtomicLong(1);
     private final Tracer tracer = GlobalOpenTelemetry.getTracer("java-app2");
@@ -33,6 +36,7 @@ public class ItemController {
     @GetMapping
     @Operation(summary = "List all items", description = "Returns all items")
     public ResponseEntity<List<Item>> list() {
+        log.info("GET /api/items list");
         return ResponseEntity.ok(new ArrayList<>(items));
     }
 
@@ -40,6 +44,7 @@ public class ItemController {
     @Operation(summary = "Get item by ID", description = "Returns a single item by its ID")
     public ResponseEntity<Item> getById(
             @Parameter(description = "Item ID") @PathVariable Long id) {
+        log.info("GET /api/items id={}", id);
         return items.stream()
                 .filter(item -> item.id().equals(id))
                 .findFirst()
@@ -53,6 +58,7 @@ public class ItemController {
         Span span = tracer.spanBuilder("ItemController.create").startSpan();
         try (Scope scope = span.makeCurrent()) {
             String name = body.getOrDefault("name", "Unnamed");
+            log.info("POST /api/items name={}", name);
             String description = body.getOrDefault("description", "");
             span.setAttribute("app.item.name", name);
             Item item = new Item(idGenerator.getAndIncrement(), name, description);
@@ -68,6 +74,7 @@ public class ItemController {
     @Operation(summary = "Delete item", description = "Deletes an item by ID")
     public ResponseEntity<Void> delete(
             @Parameter(description = "Item ID") @PathVariable Long id) {
+        log.info("DELETE /api/items id={}", id);
         boolean removed = items.removeIf(item -> item.id().equals(id));
         return removed ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
     }
