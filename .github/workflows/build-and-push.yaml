@@ -114,7 +114,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300"
+          SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300 -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
           if [ -n "$SONAR_ORGANIZATION" ]; then
             SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
           fi
