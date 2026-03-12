@@ -32,7 +32,7 @@ java-app1 (library) → GitHub Package → java-app2 (Maven dep) → mvn package
 | **Library dependency** | `com.example:java-app1` (version from property `java-app1.version`, e.g. `1.0.2`) – provides `Item`, `Message` from `com.example.javaapp1.model` |
 | **Build & image** | Single job **Maven-Docker-Build**: Maven runs in Actions (resolves java-app1 from GitHub Package, produces JAR), then Docker build uses `target/<jar>` and `entrypoint.sh` in the same job. Single-stage Dockerfile; no Maven in the image; container starts via **`/app/entrypoint.sh`** (runs `java -jar /app/app.jar`). |
 | **Configuration** | `application.properties` in `src/main/resources/` (no OCI config bucket). |
-| **CI/CD** | GitHub Actions: **Maven-Docker-Build** (build, test, Docker build/push), **Sonar** (optional SonarCloud scan), **Notify-Teams**, **Details**. |
+| **CI/CD** | GitHub Actions: **Sonar** (optional; tests with JaCoCo coverage, Sonar scan, quality gate fails = build reject), **Maven-Docker-Build** (after Sonar when configured; build, test, Docker build/push), **Notify-Teams**, **Details**. |
 
 Use this repo as a template for applications that consume the java-app1 library and optionally push a Docker image to Docker Hub.
 
@@ -214,17 +214,19 @@ docker run -p 8080:8080 java-app2
 
 ### Jobs
 
-1. **Maven-Docker-Build** (runs only when variable **DOCKERHUB_USERNAME** is set)
+1. **Sonar** (runs only when variables **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set)
+   - Checkout (full depth) → Set up JDK 21 → Configure Maven.
+   - Run `mvn verify` with **JaCoCo** (test coverage) and Sonar scan via `sonar-maven-plugin`. Supports **SonarCloud** or **self-hosted SonarQube** (we use self-hosted). Requires secret **SONAR_TOKEN** and variables **SONAR_HOST_URL**, **SONAR_PROJECT_KEY**; for SonarCloud only, also set **SONAR_ORGANIZATION**.
+   - Uses **`sonar.qualitygate.wait=true`**: the job **fails the workflow** (build reject) if the Sonar quality gate fails on the server. Coverage is reported in Sonar from the JaCoCo report. Quality gate rules (e.g. coverage thresholds) are configured in the Sonar server, not in the repo.
+
+2. **Maven-Docker-Build** (runs when **DOCKERHUB_USERNAME** is set; depends on **Sonar**)
+   - Runs only after **Sonar** has succeeded or was skipped (no Sonar vars). If Sonar runs and the quality gate fails, this job is skipped and no image is pushed.
    - Checkout → Set up JDK 21 (Temurin) → Copy `ci/settings.xml` to `~/.m2/settings.xml`.
    - Run `mvn --batch-mode package` (build + test).
    - **Get project coordinates:** `mvn help:evaluate` for `project.version` and `project.artifactId`; output `jar_file` = `artifactId-version.jar`.
    - **Set Docker tag:** e.g. `main-YYMMDDHH-<short-sha>-<run_number>` or for release `ref-name-<short-sha>`.
    - Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (image name from variable **DOCKERHUB_IMAGE**).
    - Write job summary (image, tag, JAR name).
-
-2. **Sonar** (runs only when variables **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set)
-   - Checkout (full depth) → Set up JDK 21 → Configure Maven.
-   - Run `mvn verify` and Sonar scan via `sonar-maven-plugin`. Supports **SonarCloud** or **self-hosted SonarQube** (we use self-hosted). Requires secret **SONAR_TOKEN** and variables **SONAR_HOST_URL**, **SONAR_PROJECT_KEY**; for SonarCloud only, also set **SONAR_ORGANIZATION**.
 
 3. **Notify-Teams**
    - `needs: Maven-Docker-Build`, `if: always()`.
@@ -269,7 +271,7 @@ No OCI variables or secrets are used.
 
 ### Sonar: SonarCloud vs self-hosted
 
-The **Sonar** job works with both SonarCloud and self-hosted SonarQube. Set **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** (and **SONAR_TOKEN** as a secret); the job runs when those are set.
+The **Sonar** job works with both SonarCloud and self-hosted SonarQube. Set **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** (and **SONAR_TOKEN** as a secret); the job runs when those are set. It runs tests with **JaCoCo** coverage and fails the workflow if the Sonar **quality gate** fails (build reject). The quality gate (e.g. coverage thresholds, no new critical issues) is configured in your Sonar server (SonarCloud or self-hosted), not in this repo.
 
 | Use case | **SONAR_HOST_URL** | **SONAR_PROJECT_KEY** | **SONAR_ORGANIZATION** | **SONAR_TOKEN** |
 |----------|--------------------|------------------------|-------------------------|-----------------|

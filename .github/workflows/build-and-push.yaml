@@ -12,8 +12,9 @@ permissions:
 
 jobs:
   Maven-Docker-Build:
+    needs: Sonar
     runs-on: ubuntu-latest
-    if: ${{ vars.DOCKERHUB_USERNAME != '' }}
+    if: ${{ always() && vars.DOCKERHUB_USERNAME != '' && (needs.Sonar.result == 'success' || needs.Sonar.result == 'skipped') }}
     env:
       GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
       GH_PACKAGES_PAT: ${{ secrets.GH_PACKAGES_PAT }}
@@ -113,7 +114,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY"
+          SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300"
           if [ -n "$SONAR_ORGANIZATION" ]; then
             SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
           fi
