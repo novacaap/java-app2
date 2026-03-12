@@ -1,6 +1,6 @@
 # Java App2 – Spring Boot (uses java-app1 as library)
 
-A Java 21 Spring Boot 3 web application that **uses java-app1 as a library** (shared models `Item`, `Message`) from GitHub Package Registry. No OCI bucket; configuration is from in-repo `application.properties`. CI runs Maven and builds a single-stage Docker image in one job (**Maven-Docker-Build**).
+A Java 21 Spring Boot 3 web application that **uses java-app1 as a library** (shared models `Item`, `Message`) from GitHub Package Registry. No OCI bucket; configuration is from in-repo `application.properties`. CI runs Maven once (build, test, optional Sonar) and builds a single-stage Docker image in one job (**Build-and-Sonar**).
 
 ---
 
@@ -30,9 +30,9 @@ java-app1 (library) → GitHub Package → java-app2 (Maven dep) → mvn package
 | **Group/Artifact** | `com.example:java-app2` (see `pom.xml`) |
 | **Version** | Defined in `pom.xml` (e.g. `1.0.0`) |
 | **Library dependency** | `com.example:java-app1` (version from property `java-app1.version`, e.g. `1.0.2`) – provides `Item`, `Message` from `com.example.javaapp1.model` |
-| **Build & image** | Single job **Maven-Docker-Build**: Maven runs in Actions (resolves java-app1 from GitHub Package, produces JAR), then Docker build uses `target/<jar>` and `entrypoint.sh` in the same job. Single-stage Dockerfile; no Maven in the image; container starts via **`/app/entrypoint.sh`** (runs `java -jar /app/app.jar`). |
+| **Build & image** | Single job **Build-and-Sonar**: Maven runs once in Actions (resolve java-app1, test, optional Sonar with JaCoCo), then Docker build uses `target/<jar>` and `entrypoint.sh` in the same job. Single-stage Dockerfile; no Maven in the image; container starts via **`/app/entrypoint.sh`** (runs `java -jar /app/app.jar`). |
 | **Configuration** | `application.properties` in `src/main/resources/` (no OCI config bucket). |
-| **CI/CD** | GitHub Actions: **Sonar** (optional; tests with JaCoCo coverage, Sonar scan, quality gate fails = build reject), **Maven-Docker-Build** (after Sonar when configured; build, test, Docker build/push), **Notify-Teams**, **Details**. |
+| **CI/CD** | GitHub Actions: **Build-and-Sonar** (one Maven run: build, test, optional Sonar with JaCoCo + quality gate; then Docker build/push when **DOCKERHUB_USERNAME** set), **Notify-Teams**, **Details**. |
 
 Use this repo as a template for applications that consume the java-app1 library and optionally push a Docker image to Docker Hub.
 
@@ -40,7 +40,7 @@ Use this repo as a template for applications that consume the java-app1 library 
 
 ## How Docker build works in CI
 
-Docker is built **in the same CI job** as the Maven build (**Maven-Docker-Build**). There is no separate job that downloads an artifact.
+Docker is built **in the same CI job** as the Maven build (**Build-and-Sonar**). One Maven run covers build, test, and optional Sonar; no separate job or artifact download.
 
 1. **Checkout** → **Configure Maven** (`ci/settings.xml` for GitHub Package auth).
 2. **`mvn package`** → JAR is produced in `target/<artifactId>-<version>.jar`. Maven resolves java-app1 from GitHub Package during this step.
@@ -57,7 +57,7 @@ Docker is built **in the same CI job** as the Maven build (**Maven-Docker-Build*
 ```
 java-app2/
 ├── .github/workflows/
-│   └── build-and-push.yaml      # Maven-Docker-Build, Sonar, Notify-Teams, Details
+│   └── build-and-push.yaml      # Build-and-Sonar, Notify-Teams, Details
 ├── ci/
 │   └── settings.xml             # Maven server "github" – uses env GH_PACKAGES_USERNAME, GH_PACKAGES_PAT
 ├── src/main/java/...            # Spring Boot app (controllers, Application); Item/Message from java-app1
@@ -214,26 +214,17 @@ docker run -p 8080:8080 java-app2
 
 ### Jobs
 
-1. **Sonar** (runs only when variables **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set)
-   - Checkout (full depth) → Set up JDK 21 → Configure Maven.
-   - Run `mvn verify` with **JaCoCo** (test coverage) and Sonar scan via `sonar-maven-plugin`. Supports **SonarCloud** or **self-hosted SonarQube** (we use self-hosted). Requires secret **SONAR_TOKEN** and variables **SONAR_HOST_URL**, **SONAR_PROJECT_KEY**; for SonarCloud only, also set **SONAR_ORGANIZATION**.
-   - Uses **`sonar.qualitygate.wait=true`**: the job **fails the workflow** (build reject) if the Sonar quality gate fails on the server. Coverage is reported in Sonar from the JaCoCo report. Quality gate rules (e.g. coverage thresholds) are configured in the Sonar server, not in the repo.
+1. **Build-and-Sonar** (runs when **DOCKERHUB_USERNAME** is set and/or **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set)
+   - **Single Maven run:** If Sonar vars are set, runs `mvn verify` with **JaCoCo** (test coverage) and Sonar scan via `sonar-maven-plugin` (quality gate wait = build reject on failure). If Sonar vars are not set, runs `mvn package`. No duplicate Maven build.
+   - **Get project coordinates** → **Set Docker tag** (e.g. `main-YYMMDDHH-<short-sha>-<run_number>`).
+   - When **DOCKERHUB_USERNAME** is set: Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>`.
 
-2. **Maven-Docker-Build** (runs when **DOCKERHUB_USERNAME** is set; depends on **Sonar**)
-   - Runs only after **Sonar** has succeeded or was skipped (no Sonar vars). If Sonar runs and the quality gate fails, this job is skipped and no image is pushed.
-   - Checkout → Set up JDK 21 (Temurin) → Copy `ci/settings.xml` to `~/.m2/settings.xml`.
-   - Run `mvn --batch-mode package` (build + test).
-   - **Get project coordinates:** `mvn help:evaluate` for `project.version` and `project.artifactId`; output `jar_file` = `artifactId-version.jar`.
-   - **Set Docker tag:** e.g. `main-YYMMDDHH-<short-sha>-<run_number>` or for release `ref-name-<short-sha>`.
-   - Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (image name from variable **DOCKERHUB_IMAGE**).
-   - Write job summary (image, tag, JAR name).
-
-3. **Notify-Teams**
-   - `needs: Maven-Docker-Build`, `if: always()`.
+2. **Notify-Teams**
+   - `needs: Build-and-Sonar`, `if: always()`.
    - If secret `TEAMS_WEBHOOK_URL` is set, posts a Microsoft Teams message card (build status, image tag when build ran).
 
-4. **Details**
-   - `needs: Maven-Docker-Build`, `if: always()`.
+3. **Details**
+   - `needs: Build-and-Sonar`, `if: always()`.
    - Writes run summary to the Actions run page (event, ref, actor, commit, job status table).
 
 ### Docker tag format
@@ -251,7 +242,7 @@ Configure in **Settings → Secrets and variables → Actions**.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| **DOCKERHUB_USERNAME** | No | Docker Hub username. When set, **Maven-Docker-Build** runs and pushes `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>`. Omit to skip the build job (Notify-Teams and Details still run with skipped build). |
+| **DOCKERHUB_USERNAME** | No | Docker Hub username. When set, **Build-and-Sonar** runs and pushes `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>`. Omit to skip Docker push (Sonar-only run still possible if Sonar vars set). |
 | **DOCKERHUB_IMAGE** | When pushing image | Docker image name (e.g. `java-app2`). Used as the image name when pushing to Docker Hub; the full image is `DOCKERHUB_USERNAME/DOCKERHUB_IMAGE:<tag>`. Set in **Settings → Secrets and variables → Actions → Variables**. |
 | **SONAR_HOST_URL** | When using Sonar | Sonar server URL. For **self-hosted SonarQube** use your server URL (e.g. `https://sonar.company.com`). For **SonarCloud** use `https://sonarcloud.io`. |
 | **SONAR_PROJECT_KEY** | When using Sonar | Sonar project key (e.g. `java-app2` or `myorg_java-app2`). Must match the key in your Sonar server or SonarCloud project settings. |
