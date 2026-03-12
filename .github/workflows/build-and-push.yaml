@@ -83,6 +83,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  Sonar:
+    runs-on: ubuntu-latest
+    if: ${{ vars.SONAR_HOST_URL != '' && vars.SONAR_PROJECT_KEY != '' }}
+    env:
+      GH_PACKAGES_USERNAME: ${{ secrets.GH_PACKAGES_USERNAME || github.actor }}
+      GH_PACKAGES_PAT: ${{ secrets.GH_PACKAGES_PAT }}
+      SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+      SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+      SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Configure Maven for GitHub Packages (env)
+        run: |
+          mkdir -p ~/.m2
+          cp ci/settings.xml ~/.m2/settings.xml
+
+      - name: Build and run Sonar scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY"
+          if [ -n "$SONAR_ORGANIZATION" ]; then
+            SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
+          fi
+          mvn --batch-mode verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar $SONAR_ARGS
+
   Notify-Teams:
     needs: Maven-Docker-Build
     if: always()

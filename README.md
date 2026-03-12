@@ -32,7 +32,7 @@ java-app1 (library) → GitHub Package → java-app2 (Maven dep) → mvn package
 | **Library dependency** | `com.example:java-app1` (version from property `java-app1.version`, e.g. `1.0.2`) – provides `Item`, `Message` from `com.example.javaapp1.model` |
 | **Build & image** | Single job **Maven-Docker-Build**: Maven runs in Actions (resolves java-app1 from GitHub Package, produces JAR), then Docker build uses `target/<jar>` and `entrypoint.sh` in the same job. Single-stage Dockerfile; no Maven in the image; container starts via **`/app/entrypoint.sh`** (runs `java -jar /app/app.jar`). |
 | **Configuration** | `application.properties` in `src/main/resources/` (no OCI config bucket). |
-| **CI/CD** | GitHub Actions: **Maven-Docker-Build** (build, test, Docker build/push), **Notify-Teams**, **Details**. |
+| **CI/CD** | GitHub Actions: **Maven-Docker-Build** (build, test, Docker build/push), **Sonar** (optional SonarCloud scan), **Notify-Teams**, **Details**. |
 
 Use this repo as a template for applications that consume the java-app1 library and optionally push a Docker image to Docker Hub.
 
@@ -57,7 +57,7 @@ Docker is built **in the same CI job** as the Maven build (**Maven-Docker-Build*
 ```
 java-app2/
 ├── .github/workflows/
-│   └── build-and-push.yaml      # Maven-Docker-Build, Notify-Teams, Details
+│   └── build-and-push.yaml      # Maven-Docker-Build, Sonar, Notify-Teams, Details
 ├── ci/
 │   └── settings.xml             # Maven server "github" – uses env GH_PACKAGES_USERNAME, GH_PACKAGES_PAT
 ├── src/main/java/...            # Spring Boot app (controllers, Application); Item/Message from java-app1
@@ -222,11 +222,15 @@ docker run -p 8080:8080 java-app2
    - Log in to Docker Hub → Set up Buildx → **Build and push** with `context: .`, build-args `JAR_FILE` and `REPO_NAME`, tag `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>` (image name from variable **DOCKERHUB_IMAGE**).
    - Write job summary (image, tag, JAR name).
 
-2. **Notify-Teams**
+2. **Sonar** (runs only when variables **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set)
+   - Checkout (full depth) → Set up JDK 21 → Configure Maven.
+   - Run `mvn verify` and Sonar scan via `sonar-maven-plugin`. Supports **SonarCloud** or **self-hosted SonarQube** (we use self-hosted). Requires secret **SONAR_TOKEN** and variables **SONAR_HOST_URL**, **SONAR_PROJECT_KEY**; for SonarCloud only, also set **SONAR_ORGANIZATION**.
+
+3. **Notify-Teams**
    - `needs: Maven-Docker-Build`, `if: always()`.
    - If secret `TEAMS_WEBHOOK_URL` is set, posts a Microsoft Teams message card (build status, image tag when build ran).
 
-3. **Details**
+4. **Details**
    - `needs: Maven-Docker-Build`, `if: always()`.
    - Writes run summary to the Actions run page (event, ref, actor, commit, job status table).
 
@@ -247,6 +251,9 @@ Configure in **Settings → Secrets and variables → Actions**.
 |----------|----------|-------------|
 | **DOCKERHUB_USERNAME** | No | Docker Hub username. When set, **Maven-Docker-Build** runs and pushes `DOCKERHUB_USERNAME/<DOCKERHUB_IMAGE>:<tag>`. Omit to skip the build job (Notify-Teams and Details still run with skipped build). |
 | **DOCKERHUB_IMAGE** | When pushing image | Docker image name (e.g. `java-app2`). Used as the image name when pushing to Docker Hub; the full image is `DOCKERHUB_USERNAME/DOCKERHUB_IMAGE:<tag>`. Set in **Settings → Secrets and variables → Actions → Variables**. |
+| **SONAR_HOST_URL** | When using Sonar | Sonar server URL. For **self-hosted SonarQube** use your server URL (e.g. `https://sonar.company.com`). For **SonarCloud** use `https://sonarcloud.io`. |
+| **SONAR_PROJECT_KEY** | When using Sonar | Sonar project key (e.g. `java-app2` or `myorg_java-app2`). Must match the key in your Sonar server or SonarCloud project settings. |
+| **SONAR_ORGANIZATION** | SonarCloud only | SonarCloud organization key (e.g. `myorg`). Set only when using **SonarCloud**; leave empty for self-hosted SonarQube. Find it in [SonarCloud → My Account → Organizations](https://sonarcloud.io/account/organizations). |
 
 ### Secrets
 
@@ -255,9 +262,19 @@ Configure in **Settings → Secrets and variables → Actions**.
 | **GH_PACKAGES_PAT** | Yes | **Classic** personal access token so Maven can resolve java-app1 from GitHub Package. Create at GitHub → Settings → Developer settings → Personal access tokens → **Tokens (classic)**. Scopes: **`read:packages`**; add **`repo`** if the repo or java-app1 package is private. |
 | **GH_PACKAGES_USERNAME** | Recommended | GitHub username that owns the PAT. If unset, workflow uses `github.actor`. |
 | **DOCKERHUB_TOKEN** | When pushing image | Docker Hub personal access token (Read & Write). Required when `DOCKERHUB_USERNAME` is set. Create at [Docker Hub → Security](https://hub.docker.com/settings/security). |
+| **SONAR_TOKEN** | When using Sonar | Sonar authentication token for CI. For **self-hosted**: create in SonarQube → My Account → Security. For **SonarCloud**: create at [SonarCloud → My Account → Security](https://sonarcloud.io/account/security). Required when **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** are set. |
 | **TEAMS_WEBHOOK_URL** | No | Microsoft Teams incoming webhook URL. If set, **Notify-Teams** posts a card. Create in Teams: channel → Connectors → Incoming Webhook. |
 
 No OCI variables or secrets are used.
+
+### Sonar: SonarCloud vs self-hosted
+
+The **Sonar** job works with both SonarCloud and self-hosted SonarQube. Set **SONAR_HOST_URL** and **SONAR_PROJECT_KEY** (and **SONAR_TOKEN** as a secret); the job runs when those are set.
+
+| Use case | **SONAR_HOST_URL** | **SONAR_PROJECT_KEY** | **SONAR_ORGANIZATION** | **SONAR_TOKEN** |
+|----------|--------------------|------------------------|-------------------------|-----------------|
+| **Self-hosted SonarQube** (current setup) | Your server URL (e.g. `https://sonar.company.com`) | Project key from your Sonar server | Leave empty | Token from SonarQube → My Account → Security |
+| **SonarCloud** | `https://sonarcloud.io` | Project key (e.g. `myorg_java-app2`) | Your SonarCloud org key | Token from [SonarCloud → Security](https://sonarcloud.io/account/security) |
 
 ---
 
