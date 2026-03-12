@@ -118,7 +118,7 @@ jobs:
           if [ -n "$SONAR_ORGANIZATION" ]; then
             SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
           fi
-          mvn --batch-mode verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar $SONAR_ARGS
+          mvn --batch-mode -Dmaven.project.sourceRoots.warningsDisabled=true verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar $SONAR_ARGS
 
   Notify-Teams:
     needs: Maven-Docker-Build
