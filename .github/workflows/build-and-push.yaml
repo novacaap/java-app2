@@ -41,24 +41,24 @@ jobs:
           mkdir -p ~/.m2
           cp ci/settings.xml ~/.m2/settings.xml
 
-      # - name: Build and test (with optional Sonar and quality gate check)
-      #   env:
-      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      #   run: |
-      #     if [ -n "$SONAR_HOST_URL" ] && [ -n "$SONAR_PROJECT_KEY" ]; then
-      #       # Single Maven run: verify (tests + JaCoCo) then Sonar with quality gate (fails job if gate fails)
-      #       SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY"
-      #       SONAR_ARGS="$SONAR_ARGS -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300"
-      #       SONAR_ARGS="$SONAR_ARGS -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
-      #       [ -n "$SONAR_ORGANIZATION" ] && SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
-      #       mvn --batch-mode -Dmaven.project.sourceRoots.warningsDisabled=true verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar $SONAR_ARGS
-      #     else
-      #       mvn --batch-mode package
-      #     fi
+      - name: Build and test (with optional Sonar and quality gate check)
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -n "$SONAR_HOST_URL" ] && [ -n "$SONAR_PROJECT_KEY" ]; then
+            # Single Maven run: verify (tests + JaCoCo) then Sonar with quality gate (fails job if gate fails)
+            SONAR_ARGS="-Dsonar.token=$SONAR_TOKEN -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.projectKey=$SONAR_PROJECT_KEY"
+            SONAR_ARGS="$SONAR_ARGS -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300"
+            SONAR_ARGS="$SONAR_ARGS -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml"
+            [ -n "$SONAR_ORGANIZATION" ] && SONAR_ARGS="$SONAR_ARGS -Dsonar.organization=$SONAR_ORGANIZATION"
+            mvn --batch-mode -Dmaven.project.sourceRoots.warningsDisabled=true verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar $SONAR_ARGS
+          else
+            mvn --batch-mode package
+          fi
 
-      # - name: Quality gate check passed
-      #   if: success() && vars.SONAR_HOST_URL != '' && vars.SONAR_PROJECT_KEY != ''
-      #   run: echo "Sonar quality gate check passed (build would have failed if gate failed)."
+      - name: Quality gate check passed
+        if: success() && vars.SONAR_HOST_URL != '' && vars.SONAR_PROJECT_KEY != ''
+        run: echo "Sonar quality gate check passed (build would have failed if gate failed)."
 
       - name: Get project coordinates from pom
         id: get_pom_props
