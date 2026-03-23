@@ -116,8 +116,8 @@ jobs:
       - name: Sign image (keyless)
         if: vars.DOCKERHUB_USERNAME != ''
         env:
-          COSIGN_YES: "true"
-          IMAGE_REF: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}
+          COSIGN_YES: 'true'
+          IMAGE_REF: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
         run: |
           cosign sign "${IMAGE_REF}"
           {
