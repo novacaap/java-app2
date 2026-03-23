@@ -117,7 +117,7 @@ jobs:
         if: vars.DOCKERHUB_USERNAME != ''
         env:
           COSIGN_YES: 'true'
-          IMAGE_REF: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.set_tag.outputs.tag }}
+          IMAGE_REF: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}@${{ steps.build_and_push.outputs.digest }}
         run: |
           cosign sign "${IMAGE_REF}"
           {
